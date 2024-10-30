@@ -4,7 +4,6 @@ Some example classes for people who want to create a homemade bot.
 With these classes, bot makers will not have to implement the UCI or XBoard interfaces themselves.
 """
 import time
-
 import chess
 from chess import polyglot
 from chess.engine import PlayResult, Limit
@@ -12,7 +11,6 @@ import random
 from lib.engine_wrapper import MinimalEngine
 from lib.types import MOVE, HOMEMADE_ARGS_TYPE
 import logging
-
 from timeout import Timeout
 
 # Use this logger variable to print messages to the console or log files.
@@ -21,12 +19,26 @@ from timeout import Timeout
 logger = logging.getLogger(__name__)
 VALUE_RANKED_PIECES = [chess.QUEEN, chess.ROOK,
                        chess.BISHOP, chess.KNIGHT, chess.PAWN]
-MAX_MOVE_TIME = 15
+MAX_MOVE_TIME = 10
 
 
 class GigZordEngine(MinimalEngine):
-    eval_transposition_table = {}
-    search_transposition_table = {}
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.eval_transposition_table = {}
+        self.search_transposition_table = {}
+        self.killer_moves = {}  # For killer move heuristic
+        self.history_heuristic = {}  # For history heuristic
+
+        # Initialize piece values for MVV-LVA
+        self.piece_values = {
+            chess.PAWN: 100,
+            chess.KNIGHT: 320,
+            chess.BISHOP: 330,
+            chess.ROOK: 500,
+            chess.QUEEN: 900,
+            chess.KING: 20000
+        }
 
     def eval_board(self, board: chess.Board) -> float:
         zobrist_key = polyglot.zobrist_hash(board)
@@ -34,33 +46,22 @@ class GigZordEngine(MinimalEngine):
         if memoized_eval is not None:
             return memoized_eval * (1 if board.turn else -1)
 
-        num_white_kings = len(board.pieces(chess.KING, chess.WHITE))
-        num_white_queens = len(board.pieces(chess.QUEEN, chess.WHITE))
-        num_white_rooks = len(board.pieces(chess.ROOK, chess.WHITE))
-        num_white_bishops_and_knights = len(board.pieces(
-            chess.BISHOP, chess.WHITE)) + len(board.pieces(chess.KNIGHT, chess.WHITE))
-        num_white_pawns = len(board.pieces(chess.PAWN, chess.WHITE))
-
-        num_black_kings = len(board.pieces(chess.KING, chess.BLACK))
-        num_black_queens = len(board.pieces(chess.QUEEN, chess.BLACK))
-        num_black_rooks = len(board.pieces(chess.ROOK, chess.BLACK))
-        num_black_bishops_and_knights = len(board.pieces(
-            chess.BISHOP, chess.BLACK)) + len(board.pieces(chess.KNIGHT, chess.BLACK))
-        num_black_pawns = len(board.pieces(chess.PAWN, chess.BLACK))
-
-        material_score = (
-            200 * (num_white_kings - num_black_kings)
-            + 9 * (num_white_queens - num_black_queens)
-            + 5 * (num_white_rooks - num_black_rooks)
-            + 3 * (num_white_bishops_and_knights -
-                   num_black_bishops_and_knights)
-            + 1 * (num_white_pawns - num_black_pawns)
+        # Material evaluation
+        white_material = sum(
+            len(board.pieces(piece_type, chess.WHITE)) * value
+            for piece_type, value in self.piece_values.items()
         )
+        black_material = sum(
+            len(board.pieces(piece_type, chess.BLACK)) * value
+            for piece_type, value in self.piece_values.items()
+        )
+        material_score = white_material - black_material
 
+        # Mobility evaluation
         is_white_turn = board.turn
-        board.turn = True
+        board.turn = chess.WHITE
         white_mobility = board.legal_moves.count()
-        board.turn = False
+        board.turn = chess.BLACK
         black_mobility = board.legal_moves.count()
         board.turn = is_white_turn
         mobility_score = 0.1 * (white_mobility - black_mobility)
@@ -69,16 +70,59 @@ class GigZordEngine(MinimalEngine):
         self.eval_transposition_table[zobrist_key] = evaluation
         return evaluation * (1 if board.turn else -1)
 
-    def ordered_moves(self, board, captures_only=False):
+    def ordered_moves(self, board, captures_only=False, depth=0):
         moves = list(board.legal_moves)
         if captures_only:
             moves = [move for move in moves if board.is_capture(move)]
+
+        # MVV-LVA ordering for captures
+        def mvv_lva(move):
+            if board.is_capture(move):
+                attacker_piece = board.piece_at(move.from_square)
+                if attacker_piece is None:
+                    attacker_value = 0
+                else:
+                    attacker_value = self.piece_values.get(attacker_piece.piece_type, 0)
+
+                # Handle en passant captures
+                if board.is_en_passant(move):
+                    # The captured pawn is one rank behind the to_square
+                    if board.turn == chess.WHITE:
+                        victim_square = move.to_square - 8
+                    else:
+                        victim_square = move.to_square + 8
+                    victim_piece = board.piece_at(victim_square)
+                else:
+                    victim_piece = board.piece_at(move.to_square)
+
+                if victim_piece is None:
+                    victim_value = 0
+                else:
+                    victim_value = self.piece_values.get(victim_piece.piece_type, 0)
+
+                return (victim_value * 10 - attacker_value)
+            else:
+                return 0  # Non-captures
+
+        # Prioritize killer moves
+        killer_moves = self.killer_moves.get(depth, [])
+
+        # Prioritize history heuristic scores
+        def history_score(move):
+            return self.history_heuristic.get(move.uci(), 0)
+
         # Prioritize the best move from the transposition table
         zobrist_key = polyglot.zobrist_hash(board)
         tt_entry = self.search_transposition_table.get(zobrist_key)
-        if tt_entry and tt_entry['best_move'] in moves:
-            moves.remove(tt_entry['best_move'])
-            moves.insert(0, tt_entry['best_move'])
+        tt_move = tt_entry['best_move'] if tt_entry else None
+
+        moves.sort(key=lambda move: (
+            move == tt_move,                   # Transposition table move
+            move in killer_moves,              # Killer move heuristic
+            mvv_lva(move),                     # MVV-LVA heuristic
+            history_score(move)                # History heuristic
+        ), reverse=True)
+
         return moves
 
     def quiescence_search(self, board: chess.Board, alpha: float, beta: float) -> float:
@@ -124,7 +168,7 @@ class GigZordEngine(MinimalEngine):
         best_score = float('-inf')
         best_move = None
 
-        for move in self.ordered_moves(board):
+        for move in self.ordered_moves(board, depth=depth):
             board.push(move)
             _, score = self.negamax(board, depth - 1, -beta, -alpha, max_depth)
             score = -score
@@ -133,8 +177,21 @@ class GigZordEngine(MinimalEngine):
             if score > best_score:
                 best_score = score
                 best_move = move
+
+            # Update history heuristic
+            if depth == max_depth:
+                self.history_heuristic[move.uci()] = self.history_heuristic.get(
+                    move.uci(), 0) + 2 ** depth
+
             alpha = max(alpha, score)
             if alpha >= beta:
+                # Record killer move
+                if depth not in self.killer_moves:
+                    self.killer_moves[depth] = []
+                if move not in self.killer_moves[depth]:
+                    self.killer_moves[depth].append(move)
+                    if len(self.killer_moves[depth]) > 2:  # Keep only top 2 killer moves
+                        self.killer_moves[depth].pop(0)
                 break
 
         # Store in transposition table
