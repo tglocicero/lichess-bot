@@ -221,7 +221,6 @@ class GigZordEngine(MinimalEngine):
         depth = 1
 
         self.best_move_found = None
-        # killer_moves = [[None, None] for _ in range(self.max_depth)]
         move, score = self.negamax(board, depth, float('-inf'), float('inf'))
         logger.info(f" - depth {depth}: {move}, {score}")
         with Timeout(MAX_MOVE_TIME):
