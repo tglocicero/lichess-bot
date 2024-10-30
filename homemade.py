@@ -19,7 +19,8 @@ from timeout import Timeout
 # logger.info("message") will always print "message" to the console or log file.
 # logger.debug("message") will only print "message" if verbose logging is enabled.
 logger = logging.getLogger(__name__)
-VALUE_RANKED_PIECES = [chess.QUEEN, chess.ROOK, chess.BISHOP, chess.KNIGHT, chess.PAWN]
+VALUE_RANKED_PIECES = [chess.QUEEN, chess.ROOK,
+                       chess.BISHOP, chess.KNIGHT, chess.PAWN]
 MAX_MOVE_TIME = 90
 
 
@@ -35,21 +36,24 @@ class GigZordEngine(MinimalEngine):
         num_white_kings = len(board.pieces(chess.KING, chess.WHITE))
         num_white_queens = len(board.pieces(chess.QUEEN, chess.WHITE))
         num_white_rooks = len(board.pieces(chess.ROOK, chess.WHITE))
-        num_white_bishops_and_knights = len(board.pieces(chess.BISHOP, chess.WHITE)) + len(board.pieces(chess.KNIGHT, chess.WHITE))
+        num_white_bishops_and_knights = len(board.pieces(
+            chess.BISHOP, chess.WHITE)) + len(board.pieces(chess.KNIGHT, chess.WHITE))
         num_white_pawns = len(board.pieces(chess.PAWN, chess.WHITE))
 
         num_black_kings = len(board.pieces(chess.KING, chess.BLACK))
         num_black_queens = len(board.pieces(chess.QUEEN, chess.BLACK))
         num_black_rooks = len(board.pieces(chess.ROOK, chess.BLACK))
-        num_black_bishops_and_knights = len(board.pieces(chess.BISHOP, chess.BLACK)) + len(board.pieces(chess.KNIGHT, chess.BLACK))
+        num_black_bishops_and_knights = len(board.pieces(
+            chess.BISHOP, chess.BLACK)) + len(board.pieces(chess.KNIGHT, chess.BLACK))
         num_black_pawns = len(board.pieces(chess.PAWN, chess.BLACK))
 
         material_score = (
-                200 * (num_white_kings - num_black_kings)
-                + 9 * (num_white_queens - num_black_queens)
-                + 5 * (num_white_rooks - num_black_rooks)
-                + 3 * (num_white_bishops_and_knights - num_black_bishops_and_knights)
-                + 1 * (num_white_pawns - num_black_pawns)
+            200 * (num_white_kings - num_black_kings)
+            + 9 * (num_white_queens - num_black_queens)
+            + 5 * (num_white_rooks - num_black_rooks)
+            + 3 * (num_white_bishops_and_knights -
+                   num_black_bishops_and_knights)
+            + 1 * (num_white_pawns - num_black_pawns)
         )
 
         is_white_turn = board.turn
@@ -84,7 +88,8 @@ class GigZordEngine(MinimalEngine):
         best_move = None
         for move in self.ordered_moves(board):
             board.push(move)
-            score = -1 * self.negamax(board, depth - 1, -1 * beta, -1 * alpha, move)[1]
+            score = -1 * self.negamax(board, depth -
+                                      1, -1 * beta, -1 * alpha, move)[1]
             board.pop()
             if score > best_score:
                 best_score = score
@@ -99,14 +104,15 @@ class GigZordEngine(MinimalEngine):
         depth = 1
         max_depth = 5
 
-        # self.best_move_found = None
+        self.best_move_found = None
         move, score = self.negamax(board, depth, float('-inf'), float('inf'))
         logger.info(f" - depth {depth}: {move}, {score}")
         with Timeout(MAX_MOVE_TIME):
             try:
                 while depth < max_depth:
                     depth += 1
-                    move, score = self.negamax(board, depth, float('-inf'), float('inf'))
+                    move, score = self.negamax(
+                        board, depth, float('-inf'), float('inf'))
                     self.best_move_found = move
                     logger.info(f" - depth {depth}: {move}, {score}")
                     if time.time() - start_time < MAX_MOVE_TIME / 100 and depth > 3:
@@ -179,13 +185,18 @@ class ComboEngine(ExampleEngine):
             my_time = time_limit.time
             my_inc = 0
         elif board.turn == chess.WHITE:
-            my_time = time_limit.white_clock if isinstance(time_limit.white_clock, int) else 0
-            my_inc = time_limit.white_inc if isinstance(time_limit.white_inc, int) else 0
+            my_time = time_limit.white_clock if isinstance(
+                time_limit.white_clock, int) else 0
+            my_inc = time_limit.white_inc if isinstance(
+                time_limit.white_inc, int) else 0
         else:
-            my_time = time_limit.black_clock if isinstance(time_limit.black_clock, int) else 0
-            my_inc = time_limit.black_inc if isinstance(time_limit.black_inc, int) else 0
+            my_time = time_limit.black_clock if isinstance(
+                time_limit.black_clock, int) else 0
+            my_inc = time_limit.black_inc if isinstance(
+                time_limit.black_inc, int) else 0
 
-        possible_moves = root_moves if isinstance(root_moves, list) else list(board.legal_moves)
+        possible_moves = root_moves if isinstance(
+            root_moves, list) else list(board.legal_moves)
 
         if my_time / 60 + my_inc > 10:
             # Choose a random move.
