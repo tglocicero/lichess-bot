@@ -28,7 +28,7 @@ MAX_MOVE_TIME = 30
 class GigZordEngine(MinimalEngine):
     best_move_found = None
     transposition_table = {}
-    max_depth = 5
+    max_depth = 6
     killer_moves = [[None, None] for _ in range(max_depth)]
     history_heuristic = {}
 
@@ -213,6 +213,10 @@ class GigZordEngine(MinimalEngine):
         return best_move, best_score
 
     def search(self, board: chess.Board, *args: HOMEMADE_ARGS_TYPE) -> PlayResult:
+        with polyglot.open_reader("engines/book1.bin") as reader:
+            for entry in reader.find_all(board):
+                return PlayResult(entry.move, ponder=None)
+
         start_time = time.time()
         depth = 1
 
@@ -227,8 +231,6 @@ class GigZordEngine(MinimalEngine):
                     move, score = self.negamax(board, depth, float('-inf'), float('inf'))
                     self.best_move_found = move
                     logger.info(f" - depth {depth}: {move}, {score}")
-                    if time.time() - start_time > MAX_MOVE_TIME / 10:
-                        break
             except TimeoutError:
                 depth -= 1
 
