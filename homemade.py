@@ -21,7 +21,7 @@ from timeout import Timeout
 logger = logging.getLogger(__name__)
 VALUE_RANKED_PIECES = [chess.QUEEN, chess.ROOK,
                        chess.BISHOP, chess.KNIGHT, chess.PAWN]
-MAX_MOVE_TIME = 90
+MAX_MOVE_TIME = 15
 
 
 class GigZordEngine(MinimalEngine):
@@ -93,9 +93,9 @@ class GigZordEngine(MinimalEngine):
                 alpha = score
         return alpha
 
-    def negamax(self, board: chess.Board, depth: int, alpha: float, beta: float) -> (chess.Move, float):
+    def negamax(self, board: chess.Board, depth: int, alpha: float, beta: float, max_depth: int) -> (chess.Move, float):
         if board.is_checkmate():
-            return None, float('-inf') + (self.max_depth - depth)
+            return None, float('-inf') + (max_depth - depth)
         if depth == 0:
             return None, self.quiescence_search(board, alpha, beta)
 
@@ -103,7 +103,7 @@ class GigZordEngine(MinimalEngine):
         best_move = None
         for move in self.ordered_moves(board):
             board.push(move)
-            _, score = self.negamax(board, depth - 1, -beta, -alpha)
+            _, score = self.negamax(board, depth - 1, -beta, -alpha, max_depth)
             score = -score
             board.pop()
 
@@ -121,14 +121,13 @@ class GigZordEngine(MinimalEngine):
         max_depth = 5
 
         self.best_move_found = None
-        move, score = self.negamax(board, depth, float('-inf'), float('inf'))
+        move, score = self.negamax(board, depth, float('-inf'), float('inf'), max_depth)
         logger.info(f" - depth {depth}: {move}, {score}")
         with Timeout(MAX_MOVE_TIME):
             try:
                 while depth < max_depth:
                     depth += 1
-                    move, score = self.negamax(
-                        board, depth, float('-inf'), float('inf'))
+                    move, score = self.negamax(board, depth, float('-inf'), float('inf'), max_depth)
                     self.best_move_found = move
                     logger.info(f" - depth {depth}: {move}, {score}")
                     if time.time() - start_time < MAX_MOVE_TIME / 100 and depth > 3:
