@@ -22,13 +22,15 @@ from timeout import Timeout
 # logger.debug("message") will only print "message" if verbose logging is enabled.
 logger = logging.getLogger(__name__)
 VALUE_RANKED_PIECES = [chess.QUEEN, chess.ROOK, chess.BISHOP, chess.KNIGHT, chess.PAWN]
-MAX_MOVE_TIME = 10
+MAX_MOVE_TIME = 30
 
 
 class GigZordEngine(MinimalEngine):
-    transposition_table = {}
     best_move_found = None
-
+    transposition_table = {}
+    max_depth = 5
+    killer_moves = [[None, None] for _ in range(max_depth)]
+    history_heuristic = {}
 
     def evaluate_piece(self, piece: chess.Piece, square: chess.Square, end_game: bool) -> int:
         piece_type = piece.piece_type
@@ -56,13 +58,7 @@ class GigZordEngine(MinimalEngine):
 
         return mapping[square]
 
-
     def eval_board(self, board: chess.Board) -> float:
-        zobrist_key = polyglot.zobrist_hash(board)
-        memoized_eval = self.transposition_table.get(zobrist_key)
-        if memoized_eval is not None:
-            return memoized_eval * (1 if board.turn else -1)
-
         material_score = 0
         for square in chess.SQUARES:
             piece = board.piece_at(square)
@@ -80,47 +76,27 @@ class GigZordEngine(MinimalEngine):
         mobility_score = white_mobility - black_mobility
 
         evaluation = material_score + mobility_score
-        self.transposition_table[zobrist_key] = evaluation
         return evaluation * (1 if board.turn else -1)
-
-    def move_value(self, board, move, is_endgame):
-        if move.promotion is not None:
-            return 3 if board.turn else -3
-
-        piece_type = board.piece_at(move.from_square).piece_type
-        if piece_type in [chess.PAWN, chess.KNIGHT]:
-            return 2
-
-        if piece_type in [chess.BISHOP]:
-            return 1
-
-        if piece_type in [chess.ROOK]:
-            return 0
-
-        if piece_type in [chess.QUEEN]:
-            return -1
-
-        return -2
 
     def is_endgame(self, board):
         # if no queens, it's endgame
         return len(board.pieces(chess.QUEEN, chess.WHITE)) + len(board.pieces(chess.QUEEN, chess.BLACK)) == 0
 
-    def ordered_moves(self, board):
-        # https://www.chessprogramming.org/MVV-LVA
-        moves = board.legal_moves
-        if self.best_move_found and moves and self.best_move_found in moves:
-            moves = list(board.legal_moves)
-            moves.remove(self.best_move_found)
-            moves = [self.best_move_found] + moves
-
-        def orderer(move):
-            return self.move_value(board, move, self.is_endgame(board))
-
-        in_order = sorted(moves, key=orderer, reverse=board.turn)
-        return in_order
-
     def quiescence(self, board: chess.Board, alpha: float, beta: float) -> float:
+        zobrist_key = polyglot.zobrist_hash(board)
+        tt_entry = self.transposition_table.get(zobrist_key)
+        if tt_entry:
+            tt_depth, tt_score, tt_flag = tt_entry
+            if tt_depth >= 0:
+                if tt_flag == 'exact':
+                    return tt_score
+                elif tt_flag == 'lower' and tt_score > alpha:
+                    alpha = tt_score
+                elif tt_flag == 'upper' and tt_score < beta:
+                    beta = tt_score
+                if alpha >= beta:
+                    return tt_score
+
         stand_pat = self.eval_board(board)
         best_score = stand_pat
 
@@ -140,9 +116,60 @@ class GigZordEngine(MinimalEngine):
                     return best_score
                 alpha = max(alpha, best_score)
 
+        # Store the final result in the TT as an exact score or lower bound
+        flag = 'exact' if best_score > alpha else 'lower'
+        self.transposition_table[zobrist_key] = (0, best_score, flag)
         return best_score
 
+    def ordered_moves(self, board, depth):
+        moves = list(board.legal_moves)
+
+        # Separate captures from non-captures
+        captures = [move for move in moves if board.is_capture(move)]
+        non_captures = [move for move in moves if not board.is_capture(move)]
+
+        # Sort captures by MVV-LVA
+        def mvv_lva_orderer(move):
+            if board.is_capture(move):
+                victim_piece = board.piece_at(move.to_square)  # The piece being captured
+                aggressor_piece = board.piece_at(move.from_square)  # The piece making the move
+                if victim_piece and aggressor_piece:
+                    victim_value = piece_value[victim_piece.piece_type]
+                    aggressor_value = piece_value[aggressor_piece.piece_type]
+                    return (victim_value, -aggressor_value)  # Sort by victim first, then aggressor
+                return (0, 0)
+        captures.sort(key=lambda move: mvv_lva_orderer(move), reverse=True)
+
+        # Apply killer move and history heuristics
+        killers = [move for move in non_captures if move in self.killer_moves[depth-1]]
+        history_sorted = sorted(non_captures, key=lambda move: self.history_heuristic.get(move, 0), reverse=True)
+        return captures + killers + history_sorted
+
+    def update_killer_moves(self, depth, move):
+        if move not in self.killer_moves[depth-1]:
+            self.killer_moves[depth-1][1] = self.killer_moves[depth-1][0]
+            self.killer_moves[depth-1][0] = move
+
+    def update_history_heuristic(self, move, depth):
+        if move not in self.history_heuristic:
+            self.history_heuristic[move] = 0
+            self.history_heuristic[move] += depth ** 2
+
     def negamax(self, board: chess.Board, depth: int, alpha: float, beta: float, prev_move=None) -> (chess.Move, int):
+        zobrist_key = polyglot.zobrist_hash(board)
+        tt_entry = self.transposition_table.get(zobrist_key)
+        if tt_entry:
+            tt_depth, tt_score, tt_flag = tt_entry
+            if tt_depth >= depth:
+                if tt_flag == 'exact':
+                    return prev_move, tt_score
+                elif tt_flag == 'lower' and tt_score > alpha:
+                    alpha = tt_score
+                elif tt_flag == 'upper' and tt_score < beta:
+                    beta = tt_score
+                if alpha >= beta:
+                    return prev_move, tt_score
+
         if board.is_checkmate():
             return prev_move, float('inf') if board.turn else float('-inf')
 
@@ -152,46 +179,60 @@ class GigZordEngine(MinimalEngine):
         if depth == 0:
             return prev_move, self.quiescence(board, alpha, beta)
 
-        # zobrist_key = polyglot.zobrist_hash(board)
-        # memoized_eval = self.transposition_table.get(zobrist_key)
-        # if memoized_eval is not None:
-        #     return prev_move, memoized_eval
-
         best_score = float('-inf')
         best_move = None
-        for move in self.ordered_moves(board):
+        for move in self.ordered_moves(board, depth):
             board.push(move)
             score = -1 * self.negamax(board, depth - 1, -1 * beta, -1 * alpha, move)[1]
             board.pop()
             if score > best_score:
                 best_score = score
                 best_move = move
+
+            # Beta cutoff, so we store the move as a killer move if it's not a capture
+            if best_score >= beta:
+                self.update_history_heuristic(move, depth)
+                if not board.is_capture(move):
+                    self.update_killer_moves(depth, move)
+                return best_move, best_score
+
             alpha = max(alpha, best_score)
             if beta <= alpha:
                 break
+
+        # Store the result in the transposition table
+        if best_score <= alpha:
+            flag = 'upper'  # The score is an upper bound
+        elif best_score >= beta:
+            flag = 'lower'  # The score is a lower bound
+        else:
+            flag = 'exact'  # The score is exact
+
+        self.transposition_table[zobrist_key] = depth, best_score, flag
+        self.best_move_found = best_move
         return best_move, best_score
 
     def search(self, board: chess.Board, *args: HOMEMADE_ARGS_TYPE) -> PlayResult:
-        self.transposition_table = {}
         start_time = time.time()
         depth = 1
-        max_depth = 4
 
         self.best_move_found = None
+        # killer_moves = [[None, None] for _ in range(self.max_depth)]
         move, score = self.negamax(board, depth, float('-inf'), float('inf'))
         logger.info(f" - depth {depth}: {move}, {score}")
         with Timeout(MAX_MOVE_TIME):
             try:
-                while depth < max_depth:
+                while depth < self.max_depth:
                     depth += 1
                     move, score = self.negamax(board, depth, float('-inf'), float('inf'))
                     self.best_move_found = move
                     logger.info(f" - depth {depth}: {move}, {score}")
+                    if time.time() - start_time > MAX_MOVE_TIME / 10:
+                        break
             except TimeoutError:
                 depth -= 1
 
-        if move is None:
-            move, score = self.negamax(board, 1, float('-inf'), float('inf'))
+        move = self.ordered_moves(board, 1)[0] if move is None else move
 
         logger.info(f"Best Move: {move}")
         logger.info(f"Time: {round(time.time() - start_time, 2)} seconds")
