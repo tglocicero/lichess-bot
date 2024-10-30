@@ -68,34 +68,50 @@ class GigZordEngine(MinimalEngine):
         self.transposition_table[zobrist_key] = evaluation
         return (material_score + mobility_score) * (1 if board.turn else -1)
 
-    def ordered_moves(self, board):
-        # https://www.chessprogramming.org/MVV-LVA
-        moves = board.legal_moves
-        if self.best_move_found and moves and self.best_move_found in moves:
-            moves = list(board.legal_moves)
-            moves.remove(self.best_move_found)
-            moves = [self.best_move_found] + moves
+    def ordered_moves(self, board, captures_only=False):
+        moves = list(board.legal_moves)
+        if captures_only:
+            moves = [move for move in moves if board.is_capture(move)]
+        # Optionally sort moves to improve efficiency
         return moves
 
-    def negamax(self, board: chess.Board, depth: int, alpha: float, beta: float, prev_move=None) -> (chess.Move, int):
-        if board.is_checkmate():
-            return prev_move, float('inf') if board.turn else float('-inf')
+    def quiescence_search(self, board: chess.Board, alpha: float, beta: float) -> float:
+        stand_pat = self.eval_board(board)
+        if stand_pat >= beta:
+            return beta
+        if alpha < stand_pat:
+            alpha = stand_pat
 
-        if 0 in [depth, board.legal_moves.count()]:
-            return prev_move, self.eval_board(board)
+        for move in self.ordered_moves(board, captures_only=True):
+            board.push(move)
+            score = -self.quiescence_search(board, -beta, -alpha)
+            board.pop()
+
+            if score >= beta:
+                return beta
+            if score > alpha:
+                alpha = score
+        return alpha
+
+    def negamax(self, board: chess.Board, depth: int, alpha: float, beta: float) -> (chess.Move, float):
+        if board.is_checkmate():
+            return None, float('-inf') + (self.max_depth - depth)
+        if depth == 0:
+            return None, self.quiescence_search(board, alpha, beta)
 
         best_score = float('-inf')
         best_move = None
         for move in self.ordered_moves(board):
             board.push(move)
-            score = -1 * self.negamax(board, depth -
-                                      1, -1 * beta, -1 * alpha, move)[1]
+            _, score = self.negamax(board, depth - 1, -beta, -alpha)
+            score = -score
             board.pop()
+
             if score > best_score:
                 best_score = score
                 best_move = move
-            alpha = max(alpha, best_score)
-            if beta <= alpha:
+            alpha = max(alpha, score)
+            if alpha >= beta:
                 break
         return best_move, best_score
 
