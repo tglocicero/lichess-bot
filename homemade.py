@@ -25,11 +25,12 @@ MAX_MOVE_TIME = 15
 
 
 class GigZordEngine(MinimalEngine):
-    transposition_table = {}
+    eval_transposition_table = {}
+    search_transposition_table = {}
 
     def eval_board(self, board: chess.Board) -> float:
         zobrist_key = polyglot.zobrist_hash(board)
-        memoized_eval = self.transposition_table.get(zobrist_key)
+        memoized_eval = self.eval_transposition_table.get(zobrist_key)
         if memoized_eval is not None:
             return memoized_eval * (1 if board.turn else -1)
 
@@ -65,14 +66,19 @@ class GigZordEngine(MinimalEngine):
         mobility_score = 0.1 * (white_mobility - black_mobility)
 
         evaluation = material_score + mobility_score
-        self.transposition_table[zobrist_key] = evaluation
-        return (material_score + mobility_score) * (1 if board.turn else -1)
+        self.eval_transposition_table[zobrist_key] = evaluation
+        return evaluation * (1 if board.turn else -1)
 
     def ordered_moves(self, board, captures_only=False):
         moves = list(board.legal_moves)
         if captures_only:
             moves = [move for move in moves if board.is_capture(move)]
-        # Optionally sort moves to improve efficiency
+        # Prioritize the best move from the transposition table
+        zobrist_key = polyglot.zobrist_hash(board)
+        tt_entry = self.search_transposition_table.get(zobrist_key)
+        if tt_entry and tt_entry['best_move'] in moves:
+            moves.remove(tt_entry['best_move'])
+            moves.insert(0, tt_entry['best_move'])
         return moves
 
     def quiescence_search(self, board: chess.Board, alpha: float, beta: float) -> float:
@@ -94,13 +100,30 @@ class GigZordEngine(MinimalEngine):
         return alpha
 
     def negamax(self, board: chess.Board, depth: int, alpha: float, beta: float, max_depth: int) -> (chess.Move, float):
-        if board.is_checkmate():
-            return None, float('-inf') + (max_depth - depth)
-        if depth == 0:
-            return None, self.quiescence_search(board, alpha, beta)
+        zobrist_key = polyglot.zobrist_hash(board)
+        tt_entry = self.search_transposition_table.get(zobrist_key)
+
+        if tt_entry is not None and tt_entry['depth'] >= depth:
+            node_type = tt_entry['type']
+            tt_score = tt_entry['score']
+            if node_type == 'exact':
+                return tt_entry['best_move'], tt_score
+            elif node_type == 'lowerbound':
+                alpha = max(alpha, tt_score)
+            elif node_type == 'upperbound':
+                beta = min(beta, tt_score)
+            if alpha >= beta:
+                return tt_entry['best_move'], tt_score
+
+        if depth == 0 or board.is_game_over():
+            score = self.quiescence_search(board, alpha, beta)
+            return None, score
+
+        alpha_original = alpha  # Store the original alpha value
 
         best_score = float('-inf')
         best_move = None
+
         for move in self.ordered_moves(board):
             board.push(move)
             _, score = self.negamax(board, depth - 1, -beta, -alpha, max_depth)
@@ -113,6 +136,21 @@ class GigZordEngine(MinimalEngine):
             alpha = max(alpha, score)
             if alpha >= beta:
                 break
+
+        # Store in transposition table
+        entry = {
+            'depth': depth,
+            'score': best_score,
+            'best_move': best_move
+        }
+        if best_score <= alpha_original:
+            entry['type'] = 'upperbound'
+        elif best_score >= beta:
+            entry['type'] = 'lowerbound'
+        else:
+            entry['type'] = 'exact'
+        self.search_transposition_table[zobrist_key] = entry
+
         return best_move, best_score
 
     def search(self, board: chess.Board, *args: HOMEMADE_ARGS_TYPE) -> PlayResult:
