@@ -29,6 +29,7 @@ class GigZordEngine(MinimalEngine):
         self.search_transposition_table = {}
         self.killer_moves = {}  # For killer move heuristic
         self.history_heuristic = {}  # For history heuristic
+        self.infinity = 1000000
 
         # Initialize piece values for MVV-LVA
         self.piece_values = {
@@ -165,7 +166,18 @@ class GigZordEngine(MinimalEngine):
 
         alpha_original = alpha  # Store the original alpha value
 
-        best_score = float('-inf')
+        # Null-move pruning conditions
+        if depth >= 3 and not board.is_check() and not board.has_legal_en_passant() and len(board.piece_map()) > 12:
+            R = 2  # Reduction value; commonly set to 2
+            board.push(chess.Move.null())
+            # Perform a null-move search with reduced depth
+            _, score = self.negamax(board, depth - 1 - R, -beta, -beta + 1, max_depth)
+            score = -score
+            board.pop()
+            if score >= beta:
+                return None, beta  # Beta cutoff
+
+        best_score = -self.infinity
         best_move = None
 
         for move in self.ordered_moves(board, depth=depth):
@@ -180,8 +192,7 @@ class GigZordEngine(MinimalEngine):
 
             # Update history heuristic
             if depth == max_depth:
-                self.history_heuristic[move.uci()] = self.history_heuristic.get(
-                    move.uci(), 0) + 2 ** depth
+                self.history_heuristic[move.uci()] = self.history_heuristic.get(move.uci(), 0) + 2 ** depth
 
             alpha = max(alpha, score)
             if alpha >= beta:
@@ -216,13 +227,13 @@ class GigZordEngine(MinimalEngine):
         max_depth = 5
 
         self.best_move_found = None
-        move, score = self.negamax(board, depth, float('-inf'), float('inf'), max_depth)
+        move, score = self.negamax(board, depth, -self.infinity, self.infinity, max_depth)
         logger.info(f" - depth {depth}: {move}, {score}")
         with Timeout(MAX_MOVE_TIME):
             try:
                 while depth < max_depth:
                     depth += 1
-                    move, score = self.negamax(board, depth, float('-inf'), float('inf'), max_depth)
+                    move, score = self.negamax(board, depth, -self.infinity, self.infinity, max_depth)
                     self.best_move_found = move
                     logger.info(f" - depth {depth}: {move}, {score}")
                     if time.time() - start_time < MAX_MOVE_TIME / 100 and depth > 3:
@@ -235,6 +246,7 @@ class GigZordEngine(MinimalEngine):
         logger.info(f"Depth: {depth}")
         logger.info(f"Eval: {score}")
         return PlayResult(move, ponder=None)
+
 
 
 class ExampleEngine(MinimalEngine):
