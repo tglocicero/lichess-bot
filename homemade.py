@@ -1,8 +1,3 @@
-"""
-Some example classes for people who want to create a homemade bot.
-
-With these classes, bot makers will not have to implement the UCI or XBoard interfaces themselves.
-"""
 import time
 import chess
 from chess import polyglot
@@ -17,7 +12,7 @@ from timeout import Timeout
 logger = logging.getLogger(__name__)
 
 # Maximum time (in seconds) the bot will think before making a move
-MAX_MOVE_TIME = 10
+MAX_MOVE_TIME = 30
 
 # Piece indices for PeSTO
 PIECE_TYPES = {
@@ -198,6 +193,12 @@ class GigZordEngine(MinimalEngine):
         self.history_heuristic = {}  # For history heuristic
         self.infinity = 1000000
         self.best_move_found = None
+        try:
+            self.opening_book = polyglot.open_reader('book.bin')
+            logger.info("Opening book loaded")
+        except Exception as e:
+            logger.warning(f"Could not open opening book: {e}")
+            self.opening_book = None
 
     def evaluate_board(self, board: chess.Board) -> float:
         zobrist_key = polyglot.zobrist_hash(board)
@@ -387,8 +388,28 @@ class GigZordEngine(MinimalEngine):
 
     def search(self, board: chess.Board, *args) -> PlayResult:
         start_time = time.time()
+
+        # Check if position is in the opening book
+        if self.opening_book is not None:
+            try:
+                entries = list(self.opening_book.find_all(board))
+                if entries:
+                    # Choose a move based on the weights
+                    total_weight = sum(entry.weight for entry in entries)
+                    rnd = random.randint(1, total_weight)
+                    cumulative_weight = 0
+                    for entry in entries:
+                        cumulative_weight += entry.weight
+                        if rnd <= cumulative_weight:
+                            move = entry.move  # Remove parentheses here
+                            logger.info(f"Book Move: {move}")
+                            return PlayResult(move, ponder=None)
+            except Exception as e:
+                logger.warning(f"Error accessing opening book: {e}")
+                pass  # Proceed with normal search if book fails
+
         depth = 1
-        max_depth = 10
+        max_depth = 100
 
         self.best_move_found = None
         move, score = self.negamax(board, depth, -self.infinity, self.infinity, max_depth)
