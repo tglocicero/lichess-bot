@@ -20,7 +20,7 @@ logger = logging.getLogger(__name__)
 
 class GigZordEngine(MinimalEngine):
     def search(self, board: chess.Board, *args) -> PlayResult:
-        score, move = get_best_move(board, max_move_time=5, max_depth=3)
+        score, move = get_best_move(board, max_move_time=2, max_depth=20)
         return PlayResult(move, ponder=None)
 
 

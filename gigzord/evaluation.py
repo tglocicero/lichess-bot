@@ -6,15 +6,15 @@ from gigzord.piece_evals import piece_value, pawnEvalWhite, knightEval, bishopEv
 
 
 def get_is_endgame(board):
-    return len(board.piece_map()) <= 5
+    return len(board.piece_map()) <= 16
 
 
 def evaluate_board(board, is_white):
     """material score that considers board position of pieces"""
-    if board.is_checkmate():
-        return 20000 * (1 if is_white else -1) * (1 if board.turn else -1)
-    if board.can_claim_draw():
-        return 0
+    # if board.is_checkmate():
+    #     if not is_white:
+    #         return float('inf') * (-1 if board.turn else 1)
+    #     return float('inf') * (1 if board.turn else -1)
 
     is_endgame = get_is_endgame(board)
     material_score = 0
