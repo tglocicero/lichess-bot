@@ -9,7 +9,7 @@ def get_is_endgame(board):
     return len(board.piece_map()) <= 16
 
 
-def evaluate_board(board, is_white):
+def evaluate_board(board):
     """material score that considers board position of pieces"""
     # if board.is_checkmate():
     #     if not is_white:

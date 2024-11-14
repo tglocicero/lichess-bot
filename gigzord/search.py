@@ -54,7 +54,7 @@ def get_best_move(board, max_move_time, max_depth):
     return score, moves[0]
 
 
-def negamax(board, depth, is_white, alpha=float('-inf'), beta=float('inf')):
+def negamax(board, depth, alpha=float('-inf'), beta=float('inf')):
     global nodes_explored
     global known_positions
 
@@ -71,7 +71,7 @@ def negamax(board, depth, is_white, alpha=float('-inf'), beta=float('inf')):
 
     # recursive base case
     if depth == 0:
-        return quiesce(board, is_white, alpha, beta), []
+        return quiesce(board, alpha, beta), []
     best_score = float('-inf')
     best_path = []
 
@@ -82,7 +82,7 @@ def negamax(board, depth, is_white, alpha=float('-inf'), beta=float('inf')):
         # "pretend" to make move and calculate score
         board.push(move)
         nodes_explored += 1
-        score, path = negamax(board, depth - 1, is_white,  -beta, -alpha)
+        score, path = negamax(board, depth - 1,  -beta, -alpha)
         score = -score
         board.pop()
 
@@ -100,10 +100,10 @@ def negamax(board, depth, is_white, alpha=float('-inf'), beta=float('inf')):
     return best_score, best_path
 
 
-def quiesce(board, is_white, alpha, beta):
+def quiesce(board, alpha, beta):
     global nodes_explored
 
-    stand_pat = evaluate_board(board, is_white)
+    stand_pat = evaluate_board(board)
     if abs(stand_pat) > 10000:
         return stand_pat
     if stand_pat >= beta:
@@ -115,7 +115,7 @@ def quiesce(board, is_white, alpha, beta):
         if board.is_capture(move) or board.gives_check(move):
             board.push(move)
             nodes_explored += 1
-            score = -quiesce(board, is_white, -beta, -alpha)
+            score = -quiesce(board, -beta, -alpha)
             board.pop()
 
             if score >= beta:
